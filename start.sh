@@ -6,7 +6,7 @@ set -e
 ARGO_TOKEN=""
 
 # 单端口模式 UDP 协议选择: hy2 (默认) 或 tuic
-SINGLE_PORT_UDP="hy2"
+SINGLE_PORT_UDP="tuic"
 
 # ================== CF 优选域名列表 ==================
 CF_DOMAINS=(
@@ -21,9 +21,10 @@ CF_DOMAINS=(
 # ================== 切换到脚本目录 ==================
 cd "$(dirname "$0")"
 export FILE_PATH="${PWD}/.npm"
-
-rm -rf "$FILE_PATH"
 mkdir -p "$FILE_PATH"
+INIT_FLAG="${FILE_PATH}/.initialized"
+
+
 
 # ================== 获取公网 IP ==================
 echo "[网络] 获取公网 IP..."
