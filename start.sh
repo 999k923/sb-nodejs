@@ -1,12 +1,19 @@
 #!/bin/bash
-set -e
+set -eo pipefail
 
 # ================== 配置区域 ==================
-# 固定隧道填写token，不填默认为临时隧道
+# 固定隧道 Token（留空 = 临时隧道）
 ARGO_TOKEN=""
 
-# 单端口模式 UDP 协议选择: hy2 (默认) 或 tuic
+# 固定隧道域名（你在 CF 里绑定的）
+ARGO_DOMAIN_FIXED=""
+
+# Argo 本地端口（改cloudflare隧道端口为8081）
+ARGO_PORT=8081
+
+# 单端口模式 UDP 协议选择
 SINGLE_PORT_UDP="tuic"
+
 
 # ================== CF 优选域名列表 ==================
 CF_DOMAINS=(
@@ -71,7 +78,6 @@ else
     SINGLE_PORT_MODE=false
 fi
 
-ARGO_PORT=8081
 
 # ================== UUID ==================
 UUID_FILE="${FILE_PATH}/uuid.txt"
@@ -279,20 +285,63 @@ if ! kill -0 $SB_PID 2>/dev/null; then
 fi
 echo "[SING-BOX] 已启动 PID: $SB_PID"
 
-# ================== [修复] Argo 隧道 ==================
+# ================== Argo 隧道 ==================
 ARGO_LOG="${FILE_PATH}/argo.log"
 ARGO_DOMAIN=""
 
-echo "[Argo] 启动隧道 (HTTP2模式)..."
-"$ARGO_FILE" tunnel --edge-ip-version auto --protocol http2 --no-autoupdate --url http://127.0.0.1:${ARGO_PORT} > "$ARGO_LOG" 2>&1 &
-ARGO_PID=$!
+if [ -n "$ARGO_TOKEN" ]; then
+    if [ -z "$ARGO_DOMAIN_FIXED" ]; then
+        echo "[错误] 使用固定隧道时必须填写 ARGO_DOMAIN_FIXED"
+        exit 1
+    fi
 
-for i in {1..30}; do
-    sleep 1
-    ARGO_DOMAIN=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$ARGO_LOG" 2>/dev/null | head -1 | sed 's|https://||')
-    [ -n "$ARGO_DOMAIN" ] && break
-done
-[ -n "$ARGO_DOMAIN" ] && echo "[Argo] 域名: $ARGO_DOMAIN" || echo "[Argo] 获取域名失败"
+    echo "[Argo] 使用固定隧道 Token 启动..."
+    ARGO_DOMAIN="$ARGO_DOMAIN_FIXED"
+
+    "$ARGO_FILE" tunnel \
+    --no-autoupdate \
+    run \
+    --token "$ARGO_TOKEN" \
+    --url http://127.0.0.1:${ARGO_PORT} \
+    > "$ARGO_LOG" 2>&1 &
+
+
+    ARGO_PID=$!
+    sleep 2
+
+    if ! kill -0 "$ARGO_PID" 2>/dev/null; then
+        echo "[Argo] 固定隧道启动失败"
+        tail -n 20 "$ARGO_LOG"
+        exit 1
+    fi
+
+else
+    echo "[Argo] 使用临时隧道 (trycloudflare)..."
+
+    "$ARGO_FILE" tunnel \
+        --edge-ip-version auto \
+        --protocol http2 \
+        --no-autoupdate \
+        --url http://127.0.0.1:${ARGO_PORT} \
+        > "$ARGO_LOG" 2>&1 &
+
+    ARGO_PID=$!
+
+    for i in {1..30}; do
+        sleep 1
+        ARGO_DOMAIN=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$ARGO_LOG" | head -1 | sed 's|https://||')
+        [ -n "$ARGO_DOMAIN" ] && break
+    done
+
+    if [ -z "$ARGO_DOMAIN" ]; then
+        echo "[Argo] 临时隧道域名获取失败"
+        tail -n 20 "$ARGO_LOG"
+        exit 1
+    fi
+fi
+
+echo "[Argo] 域名: $ARGO_DOMAIN"
+
 
 # ================== 生成订阅 ==================
 generate_sub "$ARGO_DOMAIN"
